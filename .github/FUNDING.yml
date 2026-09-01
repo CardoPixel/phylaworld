@@ -1,0 +1,32 @@
+# FUNDING.yml
+#
+# This file powers the "Sponsor this project" button on the repository.
+# Uncomment the lines for the platforms you actually use and fill in your
+# username / URL. Entries left commented are ignored by GitHub.
+
+# GitHub Sponsors — a comma-separated list of usernames
+# github: [your-username]
+
+# Patreon — page handle
+# patreon: your-patreon-handle
+
+# Open Collective — project slug
+# open_collective: your-project
+
+# Ko-fi — username
+# ko_fi: your-kofi-username
+
+# Liberapay — username
+# liberapay: your-liberapay-username
+
+# Tidelift — package/platform qualifier
+# tidelift: npm/your-package
+
+# IssueHunt — username
+# issuehunt: your-username
+
+# Otechie — username
+# otechie: your-username
+
+# Custom funding pages (website, Buy Me a Coffee, PayPal, etc.)
+# custom: ["https://example.com/donate"]

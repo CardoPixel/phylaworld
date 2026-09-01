@@ -247,7 +247,9 @@ We welcome contributions from everyone, of every skill level and background.
 
 ## License
 
-Licensing details are pending. This project runs on free/open software and aims to be community-first; we'll publish a clear license once the direction is finalized. (See [License](#contributing) discussion in Issues.)
+**Phylaworld is released under the [GNU Affero General Public License v3](LICENSE) (AGPL-3.0).**
+
+This copyleft license protects the community: anyone who modifies or hosts a networked version of the project must share their source code with its users. It reflects our belief that the Phylaworld universe should remain free and open for everyone, forever.
 
 ---
 

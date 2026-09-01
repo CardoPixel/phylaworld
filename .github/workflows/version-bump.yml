@@ -1,0 +1,64 @@
+# Version bump & changelog — automatic SemVer release
+#
+# Runs on EVERY push to `main` — this covers both direct commits to `main`
+# and merges from `dev` into `main`. It does NOT run on pushes to `dev`
+# (those never bump the version) or on any other branch.
+#
+# Behaviour:
+#   * Skips runs that were triggered by its own release commit (the
+#     github-actions[bot] push) to avoid infinite loops.
+#   * Analysed the conventional commits since the last release and applies:
+#       - BREAKING CHANGE / `!`  -> MAJOR (bumped as MINOR while at 0.x)
+#       - `feat:`                -> MINOR
+#       - anything else          -> PATCH
+#   * Rewrites `version.json` (single source of truth for the project version).
+#   * Prepends a Conventional Changelog section to `CHANGELOG.md`.
+#   * Commits the new version and creates an annotated `vX.Y.Z` tag.
+#
+# NOTE: if `main` is protected, the `github-actions[bot]` identity needs
+# push/tag permissions on the branch (enable branch protection rules to allow
+# the bot, or use a PAT supplied via a secret).
+
+name: Release (version bump & changelog)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and update changelog
+        id: release
+        run: python3 .github/scripts/release.py
+
+      - name: Commit and tag release
+        if: steps.release.outputs.released == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          NEW_VERSION="${{ steps.release.outputs.new_version }}"
+          git add version.json CHANGELOG.md
+          git commit -m "🔖 chore(release): v${NEW_VERSION}"
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin HEAD:main
+          git push origin "v${NEW_VERSION}"
+
+      - name: Log skipped release
+        if: steps.release.outputs.released != 'true'
+        run: echo "No new version produced (no releasable commits)."

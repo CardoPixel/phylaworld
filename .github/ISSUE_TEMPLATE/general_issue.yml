@@ -1,0 +1,51 @@
+name: General Issue
+description: Ask a question or raise a general issue (not a bug)
+title: "[Issue]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for questions, discussion, feature ideas, and
+        non-bug issues. If you're reporting a bug, use the **Bug Report**
+        template instead. Please search existing issues before posting.
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What does this issue relate to?
+      multiple: true
+      options:
+        - Gameplay / Feature Request
+        - Balancing / Design
+        - Research & Systems
+        - Art / Visuals
+        - Audio
+        - Documentation / Community
+        - Question / Help
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's on your mind?
+      description: Describe the issue, idea, or question in as much detail as you like.
+      placeholder: |
+        - What are you trying to achieve?
+        - What do you expect the behavior or outcome to be?
+        - What have you already considered or tried?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Links, references, mockups, or anything else that helps.
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched for existing issues and this is not a duplicate.
+          required: true

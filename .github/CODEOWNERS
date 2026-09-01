@@ -1,0 +1,25 @@
+# CODEOWNERS
+#
+# Each line maps a path to the users/teams that must review changes to it.
+# Replace the placeholder handle "@Phylaworld-maintainers" with your real
+# GitHub user or team before enabling required reviews.
+
+# Default owner for everything in the repository.
+* @Phylaworld-maintainers
+
+# Root documentation and governance files are deeply reviewed.
+/docs/ @Phylaworld-maintainers
+README.md @Phylaworld-maintainers
+CONTRIBUTING.md @Phylaworld-maintainers
+CODE_OF_CONDUCT.md @Phylaworld-maintainers
+SECURITY.md @Phylaworld-maintainers
+CHANGELOG.md @Phylaworld-maintainers
+LICENSE @Phylaworld-maintainers
+version.json @Phylaworld-maintainers
+
+# Automation, issue templates and repository configuration.
+/.github/ @Phylaworld-maintainers
+
+# The bundled AI tooling plugin (addons/godot_ai) ships as a base for the
+# AI-friendly workflow; changes here need core maintainer sign-off.
+/addons/godot_ai/ @Phylaworld-maintainers
