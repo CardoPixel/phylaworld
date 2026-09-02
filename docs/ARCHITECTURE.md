@@ -19,6 +19,8 @@ These are non-negotiable; every decision below derives from them.
 8. **Death is a real mechanic** (unlike Pokémon). Certain circumstances permanently remove a creature; growth stages are permanent.
 9. **Bond is a mechanic, not a flavor stat.** It modifies friendly fire in battle, ride performance, and base-task output — so every one of those systems reads the same bond value from DNA.
 10. **The world respects ownership rules.** Bases live only in designated zones behind permission unlocks; rides require crafted gear; nothing is placeable/modifiable anywhere arbitrarily.
+11. **The environment simulates physics and chemistry.** Elemental moves interact with the overworld beyond battles — fire ignites, water flows, cold freezes, heat softens metal. These rules are data, deterministic, and shared between battle and overworld.
+12. **Crafting is layered and painful.** Most craftable items require specific tools, stations, and ingredient chains. Automation through creature labor is possible at bases but gated by creature capability, stamina, and sanity.
 
 ---
 
@@ -49,9 +51,12 @@ res://
 │  │                             # taming, capture (balls + emergency release),
 │  │                             # riding/mounts, towers (PC-equivalent),
 │  │                             # bases + base_zones + farming + automation,
+│  │                             # crafting + stations + worker slots,
+│  │                             # ecosystem + physics/chemistry engine,
 │  │                             # underground sub-world, npc
 │  ├─ meta/                      # growth_stages, lifespan/death, research/dex,
-│  │                             # creature_records, breeding, nature, bond
+│  │                             # creature_records, breeding, nature, bond,
+│  │                             # stamina/sanity/labor state
 │  ├─ save/                      # save_manager, creature_dna encode/decode, migration
 │  ├─ uimod/                     # battle UI, party, dex, summary, mod manager, store
 │  └─ tools/                     # EditorPlugin: schema lint, content tester,
@@ -62,8 +67,9 @@ res://
 │  ├─ types.json  type_chart.json  taxonomies.json  terrain.json
 │  ├─ moves.json  abilities.json  statuses.json  natures.json  variants.json
 │  ├─ records.json behaviors.json items.json (incl. spheres + ball_skins)
-│  ├─ ride_types.json  ride_gear.json  crafting.json
+│  ├─ ride_types.json  ride_gear.json  crafting.json  crafting_stations.json
 │  ├─ growth_stages.json  base_tasks.json  base_zones.json
+│  ├─ ecosystem.json  physics_rules.json  map_layers.json
 │  ├─ species/                   # one file per creature (or batched)
 │  ├─ arenas.json  regions.json  wild_encounters.json  underground.json
 │  └─ ...
@@ -215,6 +221,9 @@ Obstacles and terrain are authored per arena, so only some maps have hazards —
   ],
   "rideable": {"type": "land", "slots": 1},
   "base_aptitudes": {"farming": 0.5, "energy": 1.0, "gathering": 0.0},
+  "craft_skills": {"woodworking": 0.6, "metalworking": 0.2, "cooking": 0.8},
+  "stamina": {"max": 100, "recovery_rate": 0.15},
+  "sanity": {"max": 100, "recovery_rate": 0.1},
   "catch_rate": 45,
   "growth_rate": "medium_fast"
 }
@@ -394,7 +403,179 @@ Riding requires a **crafted key item** matched to both the creature and ride typ
 Ride performance (speed, stability, terrain tolerance) is derived deterministically from the individual's **bond + relevant stats** and the gear's quality curve — no runtime RNG.
 
 ### 5.17 balance.json
-Single tuning hub: EV budget, XP curves, catch-rate formula, damage formula constants, drop rates, base labor outputs, **friendly-fire base odds**, **bond scaling curves** (friendly fire, ride quality, base tasks), crop timers, construction costs.
+Single tuning hub: EV budget, XP curves, catch-rate formula, damage formula constants, drop rates, base labor outputs, **friendly-fire base odds**, **bond scaling curves** (friendly fire, ride quality, base tasks), crop timers, construction costs, **ecosystem equilibrium thresholds**, **physics/chemistry interaction constants**, **crafting quality modifiers**.
+
+### 5.18 Ecosystem & map layers
+Every overworld map has **layers**. Layers are data-defined stacks that compose the visible world:
+
+| Layer | Mutable? | Contents |
+|---|---|---|
+| **terrain** | no | desert, beach, grassland, snow, lava, water… (permanent per cell) |
+| **topography** | no | elevation, slopes, cliff faces, cave ceilings |
+| **vegetation** | yes | trees, bushes, herbs, fungi, tall grass, crops |
+| **resources** | yes | mineral veins, ore nodes, clay deposits, gem seams |
+| **structures** | yes | player-placed objects (fences, walls, chests, crafting stations) |
+
+Players can alter the **vegetation**, **resources**, and **structures** layers freely within their base zone (and in the wild within ecosystem rules). They **cannot** change terrain type or topography — a desert stays a desert.
+
+**Ecosystem equilibrium** (Wakfu-inspired): every harvestable node belongs to a **population pool** per map chunk. Harvesting removes from the pool; the pool regenerates over time tied to the region's `ecosystem.json`. The schema:
+
+```json
+{
+  "meadow": {
+    "chunks": {"0,0": {"trees": 12, "bushes": 20, "herbs": 30}},
+    "regen": {"trees": {"per_hour": 0.003}, "bushes": {"per_hour": 0.006}, "herbs": {"per_hour": 0.01}},
+    "overharvest_threshold": 0.2,
+    "overharvest_effect": "barren",
+    "restoration_items": ["base:fertilizer", "base:seedling"]
+  }
+}
+```
+
+If a chunk drops below the threshold (over-harvesting), the `barren` state triggers: no new growth, reduced spawns, visual degradation. Restoring the chunk requires player action (planting, fertilizing). This keeps the landmass stable across multiplayer while allowing detail-level freedom.
+
+> **Multiplayer-safety contract for ecosystem (normative).** The ecosystem is the highest-contention shared state in the game, so it is scoped under an **authoritative, delta-replicated, deterministic-as-view** design. Normative rules §5.18a–§5.18i below; the enforcement/consistency design is detailed in [TRD.md §7](./TRD.md) and the persistence/network payloads in [DATA_SCHEMA.md](./DATA_SCHEMA.md).
+
+#### 5.18a Authoritative single owner
+Each map **chunk** has exactly **one authoritative owner** — the server that owns the region map (seed map), or, in offline single-player, a deterministic **local-only authority** that treats the saved chunk like a server would. Clients never directly mutate chunk population; they send **harvest/plant intents**, and the authority applies deltas.
+
+#### 5.18b State is chunk-scoped and coarse
+Replication granularity is the **chunk** (`region:chunk_coord`), not the individual node. Shared state is only the population ints + the `barren` boolean + a `mutation_seq` counter. Individual nodes, trees, and ore placements are **derived renders**, re-seeded deterministically from the chunk population (below), so they never need to be synced or stored.
+
+#### 5.18c No RNG anywhere in shared state
+All regrowth is **time-integrator based**, not random. A chunk stores only `population[resource]` and `last_regen_tick`. The current population is a pure function:
+`population(t) = clamp(pop + ∫ regen_rate dt, 0, cap)`. No floats — regen is accumulated in **integer ticks** (a fixed gametime step). Two clients or a client and the server compute identical numbers from the same `(pop, last_tick)`, so the body ("barren", node layout) is identical and verification is cheap.
+
+#### 5.18d Deterministic node layout
+From a chunk's integer population, node placement is derived by a **seeded spatial hash** over `(region_id, chunk_coord, resource, population, seed)`. The same inputs always render the same trees/ores. The seed is part of the map definition and modset, so layout is identical across peers without transferring coordinates.
+
+#### 5.18e Intents, deltas, and final authority
+- Client interacting with a node sends `IntentHarvest { node_key, tool, count }` / `IntentPlant { resource, count }`.
+- Authority validates rules (owned chunk, tool, population > 0, not barren for plant-restricted), applies the delta, and broadcasts `Mutation { chunk, resource, new_pop, seq, tick, actor }`.
+- The client **previews optimistically** in its own view and reconciles against the authoritative `Mutation` (rollback-and-apply on mismatch). Only the authority can publish `barren` transitions.
+
+#### 5.18f Mutation ordering & conflict
+Applied in strict `(seq, tick, actor_id)` order. A single mutation sequence per chunk prevents races. If two actors target the same chunk the same simulation tick, the authority serializes by actor id. Ties never resolve by client-supplied state.
+
+#### 5.18g Verification & anti-abuse
+- Client-supplied intents carry **only** unambiguous facts (a node exists at key, a species of a tool). The client never claims "population just rose" — that is always recomputed server-side.
+- Rate limits per actor per chunk; over-harvest to `barren` triggers the ecosystem rules and is a global-consistency event, not a local claim.
+- Because shared state is coarse ints, a checksum of `(chunk, pop, seq, tick)` is cheap to include in saves and validation.
+
+#### 5.18h Crafting/player-owned state is separate
+Nodes and structures **inside a player's claimed base zone** are player-owned, not chunk-population-owned. They use the normal save/ownership flow (see §5.15 base zones, DATA_SCHEMA), and are exempt from the shared ecosystem pool (they neither drain nor feed it) — this keeps bases out of MP contention.
+
+#### 5.18i Mods stay data-only & deterministic
+`ecosystem.json` exposes only rates, caps, thresholds, and effect names. A mod adds a resource type → new ints in every chunk; framework computes them identically. No mod code runs in the replication path.
+
+### 5.19 Physics & chemistry engine
+Elemental moves interact with the overworld **outside of battle** — a data-driven simulation layer:
+
+| Move type | Overworld effect | Condition |
+|---|---|---|
+| fire | ignite campfire, power forge, warm creature | target: flammable object or station |
+| water | fill container, extinguish fire, irrigate crop | target: container or fire or crop plot |
+| cold + water | freeze water surface, create ice path | climate < threshold |
+| electric | power machine, light area | target: compatible device |
+| metal (defensive) | weakened effectiveness | climate > hot_threshold |
+| electric (offensive) | unfocused / spread | rain or water terrain |
+| plant | accelerate crop growth, regenerate vegetation | target: crop or barren chunk |
+| earth | create barrier, shift loose debris | target: open cell |
+| air | push objects, spread seeds | target: movable object |
+| spirit | reveal hidden nodes, calm wild creatures | target: hidden area or creature |
+
+Physics interactions are defined in `physics_rules.json`:
+
+```json
+{
+  "fire_ignite": {
+    "trigger": {"move_type": "fire", "target_tag": "flammable"},
+    "effect": "burn",
+    "duration": "until_extinguished",
+    "spread": {"to": "adjacent_flammable", "chance": 0.1}
+  },
+  "water_fill": {
+    "trigger": {"move_type": "water", "target_tag": "container"},
+    "effect": "fill",
+    "result": "base:water_container"
+  },
+  "cold_freeze": {
+    "trigger": {"move_type": "water", "climate_below": 0},
+    "effect": "transform",
+    "result_terrain": "ice_path",
+    "duration": "5_minutes_real"
+  },
+  "current_drift": {
+    "trigger": {"object": "movable", "on_terrain": "water"},
+    "effect": "drift_downstream",
+    "carry_to": "connected_river_cell",
+    "carry_across_maps": true
+  }
+}
+```
+
+Objects (tree trunks, rocks, containers) can be **pushed, pulled, carried** by water currents, wind, or creature moves — and can travel across map connections (a river on map A feeds map B). This is the "push a log into a river and it floats downstream" mechanic.
+
+### 5.20 Crafting system
+Crafting is intentionally layered and realistic. Three tiers:
+
+| Tier | Requirement | Example |
+|---|---|---|
+| **hand** | resources only, not in battle | rope, simple bandage, water container |
+| **tool** | tool equipped in player or creature slot | planks (saw), metal ingot (hammer + tongs) |
+| **station** | crafting station with worker slots | chair (woodworking bench + saw + hammer + glue + screws) |
+
+**Recipe chains**: most items require other crafted items as ingredients. A chair needs planks (wood → saw → woodworking bench) + glue (animal fat + ash → cooking pot) + screws (metal ingot → forge + anvil) + fasteners. Chains are data-defined:
+
+```json
+{
+  "id": "base:chair",
+  "name": {"en": "Chair"},
+  "tier": "station",
+  "station": "base:woodworking_bench",
+  "ingredients": [
+    {"item": "base:planks", "count": 4},
+    {"item": "base:glue", "count": 1},
+    {"item": "base:screws", "count": 6},
+    {"item": "base:nails", "count": 4}
+  ],
+  "tools_required": ["base:saw", "base:hammer", "base:ruler"],
+  "craft_skills": {"woodworking": 0.5},
+  "quality_curve": {"skill_bonus": 0.3, "station_bonus": 0.2, "creature_bonus": 0.2}
+}
+```
+
+**Crafting stations** have **2 worker slots**: one for the player, one for a creature. Player and creature can work simultaneously for faster/better results, or either can work alone. Station schema:
+
+```json
+{
+  "id": "base:woodworking_bench",
+  "name": {"en": "Woodworking Bench"},
+  "worker_slots": 2,
+  "compatible_skills": ["woodworking"],
+  "tools_slots": 3,
+  "power_source": "manual",
+  "base_station": true
+}
+```
+
+Station `power_source` can be `manual`, `creature`, `electric`, `thermal`, `water` — so creatures or environmental systems (fire-powered forge, water-powered mill) can drive them.
+
+**Automation**: creatures at bases can operate stations autonomously (player assigns creature → station → recipe). Output = creature `craft_skills` × individual stats × bond × stamina/sanity. Creatures with zero stamina **stop working**; creatures with low sanity **make errors** or **refuse**.
+
+### 5.21 Creature labor: stamina, sanity, and capabilities
+Species declare `stamina` and `sanity` caps and recovery rates. These drive how long a creature can work before rest:
+
+```json
+{
+  "stamina": {"max": 100, "recovery_rate": 0.15, "work_drain": 0.05},
+  "sanity": {"max": 100, "recovery_rate": 0.1, "work_drain": 0.02}
+}
+```
+
+- **Stamina**: drains while working; hits 0 → creature rests automatically (cannot be forced). Recovery is time-based (at base or in sphere).
+- **Sanity**: drains slowly; low sanity → reduced quality, chance of errors, chance of refusal. High bond slows sanity drain; high bond also restores sanity faster when resting.
+- **Craft skills**: per-species aptitudes (e.g. `{"woodworking": 0.6, "metalworking": 0.2, "cooking": 0.8}`). Only skills ≥ a recipe's `craft_skills` threshold allow the creature to attempt that task. Skill value affects quality and speed.
 
 ---
 
@@ -408,7 +589,7 @@ Per individual:
 - **IV set** — unique per instance, immutable, set at spawn/birth.
 - **EV set** — trainable hidden stats.
 - **Nature**, **variant**, **growth stage**, **bond** (tamed/captured + level)
-- **records**, **lineage** (breeding), **ball type**, optional per-instance flags.
+- **records**, **lineage** (breeding), **ball type**, **stamina** & **sanity** (labor/mood values), **craft skills** (species data), optional per-instance flags.
 
 ### 6.2 EV system
 EVs boost a stat by up to **+100% of its base**. A global **budget** (`B`, default 200 percent-points, in `balance.json`) caps the total: 2 stats maxed, ~67% across 3, ~34% across 6, or any mixed combination ≤ budget with per-stat cap 100%.
@@ -463,7 +644,7 @@ Each layer resolves to a data rule (palette map or overlay asset) via the **asse
 ## 10. World, Taming vs Capturing, Riding, Storage, Bases & Underground
 
 ### 10.1 Overworld
-Top-down 2D tilemaps; the spawner reads wild encounter tables; taming takes patience and observation; the dev can flag areas for 1v1/2v2. Terrain surfaces carry a ride type (land/water/lava/snow/…) so movement rules are data.
+Top-down 2D tilemaps built from **layers** (§5.18): terrain (immutable), topography (immutable), vegetation (harvestable/plantable), resources (harvestable), structures (player-placed). The spawner reads wild encounter tables; taming takes patience and observation; the dev can flag areas for 1v1/2v2. Terrain surfaces carry a ride type (land/water/lava/snow/…) so movement rules are data. Elemental moves interact with the environment via the physics/chemistry engine (§5.19): fire ignites, water fills, cold freezes, currents carry objects downstream across connected maps.
 
 ### 10.2 Tamed vs captured
 - **Tamed:** grows faster, bonds more easily — but earns the player's trust the hard way.
@@ -481,21 +662,36 @@ Top-down 2D tilemaps; the spawner reads wild encounter tables; taming takes pati
 - **Towers:** pocket-dimension storage (the PC analogue), breeding lab, and sphere skin customization (material fee). Towers unlock **superficial dex-map data** for the region (no map pins — flavor only).
 
 ### 10.5 Bases & farming
-Bases are **sandboxes**, but not free-form worlds:
+Bases are **sandboxes** — but governed by strict rules:
 
-- **Designated base zones only.** A base can only be placed inside a region's `base_zones.json` cells — never arbitrarily on the map.
-- **Unlock + permission.** Placing a base requires (1) crafting/unlocking **construction tools** (key item) and (2) earning the **region's building permit** (e.g. a quest/currency unlock). Access is gated per region.
-- **Sandbox construction.** Within the zone, players freely place and arrange structures, plots, decorations, and storage (checking `max_structures`/`max_plots` and `buildable_terrain`).
-- **Farming.** Crop plots are grid cells with data-defined crops: planting, growth phases, watering, and harvest. Region `climate`/terrain and configured crop timers drive growth. Yield feeds materials, cooking/crafting, and the economy.
-- **Automation.** Stationed creatures run base tasks (farm work, energy generation, resource gathering, crafting assist). **Output = species `base_aptitude` × individual stats × bond multiplier** (all in data). Assignments are saved, not transient.
-- Base state persists in saves and respects multiplayer ownership rules later.
+- **Claim system.** To establish a base, the player uses a **claim item** (e.g. `base:territory_marker`) on a designated **base zone** cell. This delimits the buildable area (data from `base_zones.json`: rect/polygon cells, max structures, max plots, buildable terrain, climate).
+- **Unlock + permission.** Placing a claim requires (1) crafting/unlocking the claim item (key item) and (2) earning the **region's building permit** (quest/currency unlock). Both are per-region.
+- **Sandbox construction.** Within the claimed area, players freely place and arrange structures, plots, decorations, storage, and **crafting stations** (checking `max_structures`/`max_plots` and `buildable_terrain`). Structures are persistent and saved.
+
+**Crafting at base:**
+- Crafting stations (woodworking bench, forge, cooking pot, etc.) are placed inside the base like any structure.
+- Each station has **2 worker slots**: 1 player + 1 creature. Both can work simultaneously (faster, better quality), or either alone.
+- The player configures a station by assigning a creature + selecting a recipe. The creature's `craft_skills`, stamina, and sanity determine capability.
+- **Stamina**: drains while working; at 0 the creature rests automatically (cannot be forced). Recovery is time-based at the base or in a sphere.
+- **Sanity**: drains slowly; low sanity → reduced quality, errors, or refusal. High bond slows drain and speeds recovery.
+- **Automation**: once configured, the creature works autonomously on the assigned recipe. The player can leave and return to collected output. Output quality = `craft_skills` × stats × bond × stamina_factor × sanity_factor.
+
+**Farming:**
+- Crop plots are grid cells with data-defined crops: planting, growth phases, watering, harvest.
+- Region `climate`/terrain and configured crop timers drive growth. Crops can be irrigated with water-type moves (physics/chemistry engine, §5.19).
+- Yield feeds materials, cooking/crafting, and the economy.
+- Farming can also be automated by stationed creatures (farming aptitude × stats × bond).
+
+**Ecosystem rules apply inside bases too** — players can harvest vegetation/resources within their claimed area, but the ecosystem equilibrium (§5.18) still governs regrowth and over-harvesting consequences. Per §5.18h, nodes/structures *inside* the claim are player-owned (exempt from the shared pool), while unclaimed wilderness nodes remain chunk-population-governed.
+
+Base state persists in saves and respects multiplayer ownership rules later.
 
 ### 10.6 Underground
 A per-region exploration sub-world (4th/5th-gen inspired) that encourages ranging off the beaten path:
 
 - **Entrances** at data-defined map cells lead to a separate underground grid generated from `underground.json`.
-- **Dig spots & resource nodes** yield minerals/materials on a respawn schedule; pools and rates are data.
-- **Hazards** (cave holes, gas pockets) reuse the terrain/effect system — including the same danger rules as battle terrain.
+- **Dig spots & resource nodes** yield minerals/materials on a respawn schedule; pools and rates are data (same ecosystem equilibrium rules as surface, §5.18).
+- **Hazards** (cave holes, gas pockets) reuse the terrain/effect system — including the same danger rules as battle terrain. Physics/chemistry interactions apply: fire moves illuminate dark areas, water moves create pools, cold freezes underground streams.
 - **Secret spaces** reward tools such as a shovel and act as optional outposts/storage.
 - Underground and surface share the creature/encounter tables where configured, so exploration there also yields wild finds.
 
@@ -503,7 +699,8 @@ A per-region exploration sub-world (4th/5th-gen inspired) that encourages rangin
 
 ## 11. Save System & Cross-Game Foundation
 
-- Save = player state + party + DNA list + research log + progression + base assignments + base zones/plots/buildings + underground progress + owned ride gear/tools.
+- Save = player state + party + DNA list + research log + progression + base assignments + base zones/plots/buildings + claimed territories + crafting stations + inventory + owned ride gear/tools + **player-authored world edits inside claims** (exempt from shared ecosystem pool).
+- **Shared ecosystem chunk state (region population ints + seq + tick) is NOT player save data** — in MP it is server-authoritative; in offline SP it is stored once alongside the local region authority (see §5.18, DATA_SCHEMA). Keeping it out of the player save is what makes it MP-safe and migration-free.
 - DNA's stable, versioned, ID-only format is the shared asset of the whole connected franchise: creatures transfer between games carrying their history; medals/rewards from one game unlock features elsewhere.
 
 ---
@@ -514,7 +711,8 @@ A per-region exploration sub-world (4th/5th-gen inspired) that encourages rangin
 - Battles are deterministic (seeded RNG + fixed order) so networked battles resolve identically everywhere.
 - Networking is data-defined: a **content-manifest handshake** pins the exact modset for a room/match; servers reject mismatched modsets.
 - Trades = DNA exchange only.
-- Netcode is additive at M6, not a rewrite of the SP engine.
+- **World/ecosystem state is authoritative and delta-replicated** under the contract in §5.18a–§5.18i: chunk-scoped coarse ints, time-integrator regrowth (no RNG), deterministic node derivation, intent→delta→broadcast with strict ordering and verification. See [TRD.md §7](./TRD.md) for enforcement and [DATA_SCHEMA.md](./DATA_SCHEMA.md) for payloads.
+- Netcode is additive (M9), not a rewrite of the SP engine; the deterministic data model above is what makes that true.
 
 ---
 
@@ -524,9 +722,12 @@ A per-region exploration sub-world (4th/5th-gen inspired) that encourages rangin
 - **M1 — Battle core:** effect ops, grid + zones + terrain + cover, 1v1/2v2 resolution, seeded determinism, damage formula.
 - **M2 — Authoring pipeline:** 15 types + full chart, taxonomies, core moves/abilities, creatures, 8 variants, appearance pipeline, content tester + packager. *Gate: an outsider authors a loadable creature zip without the editor.*
 - **M3 — World:** overworld, taming vs capturing, spheres + emergency release, towers, party + summary UI, **riding + mount gear**.
-- **M4 — Progression:** growth stages (permanent), EV/IV/nature, records, research/dex, breeding via taxonomies, friendly-fire/bond, **bases + farming + automation**, **underground**, save + migration, **death rules**.
-- **M5 — Mod manager + store UI:** enable/disable, dependencies/conflicts, validation errors, browse/download/update.
-- **M6 — MP-forward:** deterministic battle sync, DNA trading, content-manifest handshake.
+- **M4 — Progression & sandbox:** growth stages (permanent), EV/IV/nature, records, research/dex, breeding via taxonomies, friendly-fire/bond, save + migration, **death rules**.
+- **M5 — Bases, crafting & automation:** claim tool + permits, base zones, layered world (terrain/topography immutable, rest mutable), ecosystem equilibrium, crafting chains + stations + 2 worker slots, creature labor (stamina/sanity/craft skills) automation.
+- **M6 — Physics & chemistry engine:** elemental move interactions, freezing/softening/spreading, water-current object transport across maps, desert water-fill, campfire/forge, machine power.
+- **M7 — Underground:** dig spots, resource nodes with ecosystem regrowth, secret spaces, hazards.
+- **M8 — Mod manager + store UI:** enable/disable, dependencies/conflicts, validation errors, browse/download/update.
+- **M9 — MP-forward:** deterministic battle sync, DNA trading, content-manifest handshake, authoritative synchronized world/ecosystem state under §5.18a–§5.18i.
 
 ---
 
@@ -536,6 +737,9 @@ A per-region exploration sub-world (4th/5th-gen inspired) that encourages rangin
 - **Trust/cheating:** data-only mods are cheap to validate; PvP can pin modsets.
 - **Web export:** filesystem restrictions around zip/cache need care (export-P1 item, not a blocker).
 - **Death design:** needs player-facing protection (clear signposting, UI warnings) — flagged as a deliberate design risk given Pokémon's conventions.
+- **Ecosystem balancing:** over-harvest vs regeneration needs careful tuning to avoid griefing/barren maps; restoration items are the mitigation.
+- **Creature labor depth:** stamina/sanity/capabilities are content-heavy to author per species; the framework must ship good defaults and strong validation.
+- **Physics engine scope:** full Skyrim/BotW-level interaction is aspirational; v1 ships the bounded, data-driven rule set in `physics_rules.json`, extensible by mods.
 - **AI-friendly authoring:** plain JSON + schemas makes the `godot_ai` addon, MCP, and CLI first-class content tooling.
 
 ---
@@ -547,7 +751,9 @@ A per-region exploration sub-world (4th/5th-gen inspired) that encourages rangin
 | a creature, move, variant   | drop a JSON (or zip it) into `user://mods/`                      |
 | a ride type / mount gear    | JSON in `ride_types.json` / `ride_gear.json` + item & sprite     |
 | a new effect op             | framework PR in `addons/phylaworld/battle/effect_library/`        |
-| a new base task / ball skin | JSON in `base_tasks.json` / `items.json` + optional sprite        |
+| a base task / ball skin     | JSON in `base_tasks.json` / `items.json` + optional sprite        |
 | a base zone / underground   | JSON in `base_zones.json` / `underground.json` + map cells        |
-| a whole new region          | scene + JSON region/encounter/arena/base_zone data                |
+| an ecosystem / physics rule | JSON in `ecosystem.json` / `physics_rules.json`                   |
+| a recipe / crafting station | JSON in `crafting.json` / `crafting_stations.json`                |
+| a whole new region          | scene + JSON region/encounter/arena/base_zone/ecosystem data      |
 | a translation               | edit the i18n objects in any content file                         |

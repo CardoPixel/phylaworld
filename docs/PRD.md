@@ -2,7 +2,7 @@
 
 > **Product:** Phylaworld — a pixel art, top-down 2D multiplayer world where creatures are tamed, studied, trained, and fought in turn-based battles.
 > **Doc status:** Living document. Requirements here describe *what* the product must do and *why*; the [ARCHITECTURE.md](./ARCHITECTURE.md) describes *how* it is built. When they conflict, this document wins on intent; ARCHITECTURE wins on implementation.
-> **Product pillars:** Creature collection & training · Turn-based tactical grid battles · Exploration & underground · Taming vs capturing · Breeding via taxonomy · Riding & mounts · Farming & bases · Research-driven dex · Mod-first content · Cross-game creature universe.
+> **Product pillars:** Creature collection & training · Turn-based tactical grid battles · Exploration & underground · Taming vs capturing · Breeding via taxonomy · Riding & mounts · Farming & bases · Sandbox survival (layered world, ecology, physics/chemistry, crafting) · Research-driven dex · Mod-first content · Cross-game creature universe.
 
 ---
 
@@ -22,6 +22,7 @@ It is the *mainline* game of a connected franchise. A creature is a persistent, 
 - **G5.** Support both solitary play (tamed/captured progression) and social play (trading, bases, challenges, multiplayer).
 - **G6.** Provide long-horizon meta: research, records, growth stages, breeding, bases/farming.
 - **G7.** Keep multiplayer as an additive layer over a deterministic, mod-safe single-player core.
+- **G8.** Deliver a sandbox survival layer: a persistent world you can reshape in the "details" (harvest, plant, build, craft) but not in its fundamentals (terrain/topography), with ecosystem balance and physics/chemistry-driven emergent interactions.
 
 ### Non-Goals (v1)
 - **NG1.** No manual level-gating of content creation; mod content loads at runtime.
@@ -29,6 +30,8 @@ It is the *mainline* game of a connected franchise. A creature is a persistent, 
 - **NG3.** Not a pure "cosmetic-only" personalization game: cosmetic depth is real, but utility items and loyalty matter more.
 - **NG4.** No platform support commitment for iOS/macOS (community welcome).
 - **NG5.** No auto-filling dex: research is earned through observation, not captures.
+- **NG6.** No full terrain/topography editing (by design): deserts stay deserts; freedom is in detail layers, not the landmass.
+- **NG7.** No unbounded physics simulation: the physics/chemistry engine ships a governed, data-driven rule set — Skyrim/BotW depth is aspirational, not v1.
 
 ## 3. Players & Personas
 
@@ -37,7 +40,8 @@ It is the *mainline* game of a connected franchise. A creature is a persistent, 
 | The Collector | Loves variants, rare mutants/hybrids, shinies. | Variant depth (8 kinds), breeding, trading. |
 | The Tactician | Competitive battler. | Deterministic grid PvP, records, friendly-fire/bond meta. |
 | The Explorer / Photographer | Likes wilds, dex, scenery. | Research observation, ride exploration, underground. |
-| The Farmer / Builder | Base-building, resource loops. | Designated base zones, farming, automation with creatures. |
+| The Farmer / Builder | Base-building, resource loops. | Designated base zones, farming, automation with creatures, being assigned tasks, claiming. |
+| The Sandbox/Resource Player | Wants to reshape the world in its details, craft, use physics. | Layered world editing, ecosystem balance, physics/chemistry interactions, deep crafting chains. |
 | The Modder | Creates content for others. | Text-file authoring, packaging, store, validation. |
 | The AI Assistant / Contributor | Builds content/tooling programmatically. | Plain JSON + schemas, lint/test/package tooling. |
 
@@ -53,11 +57,13 @@ It is the *mainline* game of a connected franchise. A creature is a persistent, 
 ```
 Explore a region (overworld / riding / underground)
    → observe behaviors with the dex (research data)
+   → gather harvestable resources, mine, fell trees, forage (ecosystem-aware)
    → encounter wild creatures → tame OR capture
    → train (battles, EVs), grow (stages), bond, breed (taxonomies)
    → battle in grid arenas (1v1 / 2v2)
-   → earn records & materials
-   → build/upgrade base, farm, automate tasks with creatures
+   → craft (hand → tool → station chains), build/upgrade base, farm,
+     automate tasks with creatures (stamina/sanity/gated by capability)
+   → interact with the world via physics/chemistry (fire, water, cold, machines)
    → store, customize (spheres/skins), trade, research, compete
 ```
 
@@ -139,15 +145,45 @@ Explore a region (overworld / riding / underground)
 - **FR-R1.4 Bond & stats affect riding.** Better bond/stats improve ride performance (speed, stability, terrain tolerance).
   - AC: Ride quality reproducible from DNA-derived values (deterministic).
 
-### F10 — Farming & Bases
+### F10 — Farming, Bases & Sandbox
 
 - **FR-BA1.1 Base placement.** Bases are sandboxes restricted to **designated base zones** per region — not buildable anywhere.
-- **FR-BA1.2 Unlock conditions.** Players must unlock construction tools and obtain **regional permission** before placing a base in that region.
-- **FR-BA1.3 Sandbox construction.** Free-form placement of structures/plots/decoration within the zone.
+- **FR-BA1.2 Claim + unlock.** Players must craft/obtain a **claim item** (e.g. territory marker) and earn **regional permission** before claiming a base zone in that region.
+- **FR-BA1.3 Sandbox construction.** Free-form placement of structures/plots/decoration/crafting stations within the claimed zone.
 - **FR-BA1.4 Farming.** Crop cultivation on plots: planting, growing phases, watering, harvesting; crops yield materials/items; climate/terrain per region affects crops.
 - **FR-BA1.5 Automation.** Stationed creatures automate base tasks (farming, energy generation, resource gathering, crafting assistance, etc.).
-  - AC: Output depends on species aptitude + individual stats + **bond**.
-- **FR-BA1.6 Persistence.** Base state (plots, buildings, assignments) persists and travels with saves; respecting multiplayer rules later.
+  - AC: Output depends on species aptitude × individual stats × **bond** × **stamina** × **sanity**.
+- **FR-BA1.6 Persistence.** Base state (claim, plots, buildings, stations, assignments) persists and travels with saves; respecting multiplayer rules later.
+- **FR-BA1.7 Worker slots.** Crafting stations have **2 worker slots** (1 player + 1 creature) that cooperate or work alone. Player and creature can craft the same item simultaneously.
+  - AC: A player using a station with an assigned creature produces faster and/or better results than either alone.
+
+### F15 — Layered World & Ecology
+
+- **FR-SV1.1 Layered maps.** Each map composes layers: **terrain** (immutable), **topography** (immutable), **vegetation** (mutable), **resources** (mutable), **structures** (player-placed).
+  - AC: Terrain/topography cannot change; vegetation/resources/structures can.
+- **FR-SV1.2 Harvest & plant.** Players can chop trees, clear bushes, harvest herbs and fungi, sow seeds, plant trees, mine mineral/metal ores and clay, and collect resources — all on mutable layers.
+- **FR-SV1.3 Ecosystem equilibrium.** Every harvestable node belongs to a population pool per map chunk with regeneration; over-harvesting below a threshold triggers a *barren* state (no regrowth, fewer spawns) until restored.
+  - AC: Multiplayer landmasses stay stable overall; players reshape details; restoration requires player action (planting/fertilizing).
+- **FR-SV1.4 Deterministic persistence.** World edits (harvests, plantings, structures) are saved and shared consistently.
+
+### F16 — Physics & Chemistry Engine
+
+- **FR-PH1.1 Elemental interactions.** Fire moves ignite flammable objects, power forges/machines, warm creatures; water fills containers, extinguishes fires, irrigates crops; cold turns slow water moves to ice on cold climates; electric unfocused on rain/water; metal defense softened by heat.
+  - AC: A player can summon a water-type creature, use a water move to fill a container and drink on a desert.
+- **FR-PH1.2 Object transport.** Objects (tree trunks, rocks, containers) can be pushed/pulled/carried by water currents, wind, or creature moves and travel across connected maps.
+  - AC: A felled tree pushed into a river drifts downstream to the connected zone/map.
+- **FR-PH1.3 Data-driven rules.** All interactions defined in `physics_rules.json`; a mod extends them without code.
+  - AC: Adding a new interaction is pure JSON.
+
+### F17 — Crafting & Creature Labor
+
+- **FR-CR1.1 Crafting tiers.** Recipes have tiers: **hand** (resources only, not in battle) / **tool** (tool equipped) / **station** (station + tools, usually both).
+- **FR-CR1.2 Recipe chains.** Most craftables require other crafted items (chair → planks + glue + screws + nails; planks → wood + saw + bench; screws → ingot + forge + anvil).
+- **FR-CR1.3 Painful but automatable.** Process intentionally detailed (as real life) but can be automated at bases by capable creatures, orchestrated by the player.
+- **FR-CR1.4 Creature stamina/sanity.** Labor drains stamina (0 → resting, cannot be forced) and sanity (low → poor quality, errors, or refusal). High bond slows sanity drain and speeds recovery.
+  - AC: A tired creature cannot be forced to work; an unhappy creature may refuse or do poorly.
+- **FR-CR1.5 Craft skills.** Species declare craft skills; only creatures with sufficient skill for the recipe can attempt it, and skill affects speed/quality.
+- **FR-CR1.6 Skill/quality modifiers.** Quality scales with player skill + station bonus + creature skill/bond.
 
 ### F11 — Records & Creature Achievements
 
@@ -177,8 +213,8 @@ Explore a region (overworld / riding / underground)
 
 ## 7. Economy & Balance Framework
 
-- Single tunable hub: `balance.json` (EV budget, XP curves, catch formula, damage constants, friendly-fire base odds, ride quality curve, base output rates, crop timers, material costs).
-- Materials drive: sphere skins, mount gear, construction, farming upgrades, tower services.
+- Single tunable hub: `balance.json` (EV budget, XP curves, catch formula, damage constants, friendly-fire base odds, ride quality curve, base output rates, crop timers, construction/crafting costs, **ecosystem thresholds**, **physics/chemistry constants**, **stamina/sanity curves**, **crafting quality**).
+- Materials drive: sphere skins, mount gear, construction, farming upgrades, crafting, tower services.
 - No pay-to-win; monetization out of scope for this doc.
 
 ## 8. Non-Functional Requirements
@@ -191,6 +227,7 @@ Explore a region (overworld / riding / underground)
 | NFR-4 | Accessibility | Key prompts UI-accessible; death risks clearly signposted |
 | NFR-5 | Performance | Pixel-art 2D target: smooth on mid hardware; Android/Web friendly |
 | NFR-6 | Platform limits | Web filesystem limits for zip/cache handled |
+| NFR-7 | World-edit determinism | Harvest/plant/build changes deterministic and consistent across sync (no float state) |
 
 ## 9. Success Metrics
 
@@ -198,10 +235,12 @@ Explore a region (overworld / riding / underground)
 - Variant/breeding meta participation (hybrids bred, records earned).
 - Exploration depth signal: underground visits, riding usage, dex completion via research.
 - Deterministic-combat confidence for MP (no desyncs in seeded battles).
+- Sandbox engagement: harvests/plantings/builds/crafts per session, base automation usage, physics/chemistry interaction discovery.
+- Ecosystem health: no chronically barren chunks in stable multiplayer communities.
 
 ## 10. Milestone Scope (echo of ARCHITECTURE §13)
 
-- **M0** Foundations & mod loading · **M1** Battle core · **M2** Authoring pipeline · **M3** World + taming/capturing + riding · **M4** Progression: growth, records, research, breeding, **bases/farming** + **underground** · **M5** Mod manager + store · **M6** MP-forward.
+- **M0** Foundations & mod loading · **M1** Battle core · **M2** Authoring pipeline · **M3** World + taming/capturing + riding · **M4** Progression: growth, records, research, breeding, death · **M5** Bases, crafting & automation (claim, layered world, ecosystem, crafting chains, creature labor) · **M6** Physics & chemistry engine · **M7** Underground · **M8** Mod manager + store · **M9** MP-forward.
 
 ## 11. Risks & Open Questions
 
@@ -209,6 +248,9 @@ Explore a region (overworld / riding / underground)
 - **Friendly fire UX** — must communicate odds; potentially contentious in competitive play; constants tunable.
 - **Base placement rules** — balancing sandbox freedom with region integrity.
 - **Underground scope** — "in some way" per request; v1 may ship a focused subset (dig sites + secret spaces + resources).
+- **Ecosystem balance** — avoiding griefing/barren maps in multiplayer; restoration actions are the mitigation.
+- **Creature labor authoring** — stamina/sanity/skills per species is content-heavy; ship strong defaults + validation.
+- **Physics engine scope** — Skyrim/BotW depth is aspirational; v1 is a governed, data-driven rule set.
 - **Mod store trust** — signing/curation is post-v1.
 
 ## 12. Glossary
@@ -216,10 +258,15 @@ Explore a region (overworld / riding / underground)
 - **DNA** — versioned ID-only encoding of an individual creature (species→ball).
 - **Variant** — one of 8 appearance/species-level forms (normal is the first).
 - **Taxonomy** — breeding/bodyplan class (max 3 per species).
-- **Bond** — per-instance loyalty stat feeding friendly fire, riding, base labor.
+- **Bond** — per-instance loyalty stat feeding friendly fire, riding, base labor, sanity recovery.
 - **Records** — per-creature history gates (moves, growth).
 - **Sphere** — storage device; **Tower** — storage/lab/customization hub.
-- **Base zone** — designated buildable area requiring permission + tools.
+- **Base zone** — designated buildable area requiring claim item + regional permission.
+- **Map layer** — one of terrain/topography (immutable) or vegetation/resources/structures (mutable).
+- **Ecosystem equilibrium** — population-pool regrowth + over-harvest barren state.
+- **Physics/chemistry engine** — data-driven elemental move interactions with the world and object transport.
+- **Crafting station** — a 2-worker-slot (player + creature) placeable crafting surface.
+- **Craft skill / stamina / sanity** — per-species labor mechanics gating autonomous crafting.
 - **Underground** — exploration sub-world per region.
 
 ---
